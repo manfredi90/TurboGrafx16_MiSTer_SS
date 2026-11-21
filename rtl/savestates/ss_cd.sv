@@ -637,13 +637,14 @@ always @(posedge clk) begin
 			endcase
 		end
 
+		// the state is loaded back from the buffer before the core goes on: reading it
+		// for the save is not without effects on the core (and the drive was stopped
+		// meanwhile), a load is known to put everything back
 		S_SV_NEXT: begin
 			lba_n <= lba_n + 6'd32;
-			if (lba_n + 6'd32 >= total_lbas) begin
-				load_ok <= 1;
-				st      <= S_SV_RESYNC;
-			end
+			if (lba_n + 6'd32 >= total_lbas) st <= verifying ? S_SV_RESYNC : S_LD_ENG;
 			else st <= S_SV_FILL;
+			if (lba_n + 6'd32 >= total_lbas && verifying) load_ok <= 1;
 		end
 
 		//------------------------------------------------------------------ load
@@ -742,7 +743,7 @@ always @(posedge clk) begin
 		S_LD_ENGWAIT: begin
 			if (eng_load_done || (wait_cnt > 4 && !eng_busy)) begin
 				load_ok      <= eng_load_done;
-				if (VERIFY && eng_load_done) st <= S_VF_ENG;
+				if (VERIFY && eng_load_done && !saving) st <= S_VF_ENG;
 				else begin
 					fifo_clr     <= 1;
 					clr_drop_all <= 1;
