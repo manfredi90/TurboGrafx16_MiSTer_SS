@@ -23,7 +23,9 @@
 
 module ss_cd #(parameter [27:0] GAP = 28'd2147000, parameter [27:0] REFILL = 28'd85900000,
                // test: after a load the state is saved again at once, in slot 4
-               parameter VERIFY = 0)
+               parameter VERIFY = 0,
+               // longest wait for Main to read a message (it can be writing to the SD card)
+               parameter [27:0] MAIN_WAIT = 28'd255000000)
 (
 	input             clk,
 	input             reset,
@@ -475,7 +477,7 @@ reg   [2:0] c;
 reg  [27:0] wait_cnt;
 reg  [27:0] since_inj;   // time since the last command to Main
 reg         unread = 0;  // Main has not read it yet
-wire        inj_free = since_inj >= GAP && (!unread || since_inj >= REFILL);
+wire        inj_free = since_inj >= GAP && (!unread || since_inj >= MAIN_WAIT);
 reg   [2:0] step;
 reg         load_ok;
 reg         saving;
@@ -647,12 +649,11 @@ always @(posedge clk) begin
 			endcase
 		end
 
-		// the state is loaded back from the buffer before the core goes on: reading it
-		// for the save is not without effects on the core (and the drive was stopped
-		// meanwhile), a load is known to put everything back
+		// the state is then loaded from the file, as by a load: the core goes on exactly
+		// as after one, and Main has written the file when it gives it back
 		S_SV_NEXT: begin
 			lba_n <= lba_n + 6'd32;
-			if (lba_n + 6'd32 >= total_lbas) st <= verifying ? S_SV_RESYNC : S_LD_ENG;
+			if (lba_n + 6'd32 >= total_lbas) st <= verifying ? S_SV_RESYNC : S_LD_HDR;
 			else st <= S_SV_FILL;
 			if (lba_n + 6'd32 >= total_lbas && verifying) load_ok <= 1;
 		end
@@ -682,6 +683,7 @@ always @(posedge clk) begin
 							hold <= 1;
 							st   <= S_LD_FREEZE;
 						end
+						else if (saving) st <= S_FAIL;
 						else begin
 							info <= I_EMPTY;
 							st   <= S_DONE;
