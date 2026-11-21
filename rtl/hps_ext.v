@@ -25,7 +25,8 @@ module hps_ext
 
 	// CD interface
 	input      [112:0] cd_in,
-	output reg [112:0] cd_out
+	output reg [112:0] cd_out,
+	output reg         cd_got      // Main has read the message in cd_in
  );
 
 assign EXT_BUS[15:0] = io_dout;
@@ -49,6 +50,7 @@ always@(posedge clk_sys) begin
 	reg  [7:0] cd_req = 0;
 	reg        old_cd = 0; 
 
+	cd_got <= 0;
 	old_cd <= cd_in[112];
 	if(old_cd ^ cd_in[112]) cd_req <= cd_req + 1'd1;
 
@@ -79,7 +81,10 @@ always@(posedge clk_sys) begin
 							4: io_dout <= cd_in[63:48];
 							5: io_dout <= cd_in[79:64];
 							6: io_dout <= cd_in[95:80];
-							7: io_dout <= cd_in[111:96];
+							7: begin
+									io_dout <= cd_in[111:96];
+									cd_got  <= 1;
+								end
 						endcase
 
 				CD_SET: case(byte_cnt)

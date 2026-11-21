@@ -439,12 +439,14 @@ pce_top #(LITE) pce_top
 wire  [35:0] EXT_BUS;
 reg  [112:0] cd_in = 0;
 wire [112:0] cd_out;
+wire cd_got;
 hps_ext hps_ext
 (
 	.clk_sys(clk_sys),
 	.EXT_BUS(EXT_BUS),
 	.cd_in(cd_in),
-	.cd_out(cd_out)
+	.cd_out(cd_out),
+	.cd_got(cd_got)
 );
 
 reg cd_en = 0;
@@ -1565,6 +1567,7 @@ ss_cd #(.VERIFY(1)) ss_cd
 	.block_out    (cd_block),
 	.inj_req      (cd_inj_req),
 	.inj_data     (cd_inj_data),
+	.msg_got      (cd_got),
 
 	.stat_ev      (cd_stat_rec),
 	.stat_in      (cd_stat),

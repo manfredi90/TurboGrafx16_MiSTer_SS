@@ -37,6 +37,8 @@ module tb;
 localparam GAP    = 30000;
 localparam TICK   = 10000;      // Main's 13.33 ms
 localparam REFILL = 2000000;
+localparam MAIN_BUSY = 100000;   // Main does not read messages for this long after a write
+int        m_busy = 0;
 localparam [31:0] SIZE_CD = 148800;
 localparam [25:0] BUF = 26'h3900000;
 
@@ -66,6 +68,7 @@ reg         comm_ev = 0, dataout_ev = 0, reset_ev = 0;
 reg         code2_ev = 0;
 wire        msg_ev = comm_ev | reset_ev | code2_ev;
 wire        block_out, inj_req;
+reg         msg_got = 0;
 wire[111:0] inj_data;
 reg         stat_ev = 0;
 reg  [15:0] stat_in = 0;
@@ -116,7 +119,7 @@ ss_cd #(.GAP(GAP), .REFILL(REFILL)) dut
 	.eng_save(eng_save), .eng_load(eng_load), .eng_busy(eng_busy), .eng_load_done(eng_load_done), .eng_restore(eng_restore),
 	.hold(hold), .paused(paused), .core_run(core_run), .fifo_clr(fifo_clr),
 	.bus_din(bus_din), .bus_adr(bus_adr), .bus_wren(bus_wren), .bus_rst(bus_rst), .bus_dout(bus_dout),
-	.comm(comm), .comm_ev(comm_ev), .dataout_ev(dataout_ev), .reset_ev(reset_ev), .msg_ev(msg_ev), .block_out(block_out), .inj_req(inj_req), .inj_data(inj_data),
+	.comm(comm), .comm_ev(comm_ev), .dataout_ev(dataout_ev), .reset_ev(reset_ev), .msg_ev(msg_ev), .block_out(block_out), .inj_req(inj_req), .inj_data(inj_data), .msg_got(msg_got),
 	.stat_ev(stat_ev), .stat_in(stat_in), .dout_ev(dout_ev), .stat_get(stat_get), .stat_out(stat_out), .dout_req(dout_req),
 	.pkt_hdr(pkt_hdr), .pkt_ch(pkt_ch), .pkt_len(pkt_len), .byte_wr(byte_wr), .byte_idx(byte_idx), .byte_val(byte_val), .drop(drop), .scsi_rd(scsi_rd), .scsi_reset(scsi_reset),
 	.ddr_owner(ddr_owner), .ddr_adr(ddr_adr), .ddr_din(ddr_din), .ddr_rnw(ddr_rnw), .ddr_req(ddr_req), .ddr_done(ddr_done), .ddr_dout(ddr_dout),
@@ -195,6 +198,8 @@ task automatic sd_op(input bit wr, input [31:0] lba, input [5:0] blks);
 			if (longint'(lba) * 512 + n * 2 > file_size) file_size = longint'(lba) * 512 + n * 2;
 		end
 		else $display("NOTE %0t: Main drops a write at block %0d, file has %0d blocks", $time, lba, file_size / 512);
+		// Main finishes the write after the core is told it is done
+		m_busy = MAIN_BUSY;
 	end
 	sd_ack <= 0;
 	repeat (20) @(posedge clk);
@@ -385,7 +390,19 @@ initial begin
 	forever begin
 		@(posedge clk);
 		t++;
-		if (msgq.size()) m_exec(msgq.pop_front(), msginj.pop_front());
+		msg_got <= 0;
+		if (m_busy) m_busy--;
+		else if (msgq.size()) begin
+			// Main reads only the last message: the ones before are lost
+			while (msgq.size() > 1) begin
+				errors++;
+				$display("ERROR %0t: Main busy, message %h lost", $time, msgq[0]);
+				void'(msgq.pop_front());
+				void'(msginj.pop_front());
+			end
+			m_exec(msgq.pop_front(), msginj.pop_front());
+			msg_got <= 1;
+		end
 		if (t >= TICK) begin
 			t = 0;
 			if (m_has_stat && !m_latency) begin send_stat(); m_has_stat = 0; end

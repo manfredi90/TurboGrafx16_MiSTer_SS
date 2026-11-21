@@ -66,6 +66,7 @@ module ss_cd #(parameter [27:0] GAP = 28'd2147000, parameter [27:0] REFILL = 28'
 	output reg        block_out,      // messages of the core to Main are not sent
 	output reg        inj_req,        // send inj_data to Main instead (pulse)
 	output reg[111:0] inj_data,
+	input             msg_got,        // Main has read the last message (pulse)
 
 	// Main to core
 	input             stat_ev,        // status (pulse)
@@ -473,6 +474,8 @@ reg  [10:0] q_n;         // 64-bit words of the buffer done
 reg   [2:0] c;
 reg  [27:0] wait_cnt;
 reg  [27:0] since_inj;   // time since the last command to Main
+reg         unread = 0;  // Main has not read it yet
+wire        inj_free = since_inj >= GAP && (!unread || since_inj >= REFILL);
 reg   [2:0] step;
 reg         load_ok;
 reg         saving;
@@ -521,9 +524,16 @@ always @(posedge clk) begin
 	old_ack <= sd_ack;
 	if (~old_ack & sd_ack) {sd_rd, sd_wr} <= 0;
 
-	// Main sees a message when the toggle bit changes: two too close, and both are lost
+	// Main sees a message when the toggle bit changes and reads only the last one: a
+	// message is sent only once Main has read the one before (Main can be slow, as
+	// after the save file is written), and not too close to it
 	if (~&since_inj) since_inj <= since_inj + 1'd1;
 	if (msg_ev) since_inj <= 0;
+	if (msg_ev || inj_req) unread <= 1;
+	if (msg_got) begin
+		unread    <= 0;
+		since_inj <= 0;
+	end
 	wait_cnt <= wait_cnt + 1'd1;
 
 	case (st)
@@ -555,7 +565,7 @@ always @(posedge clk) begin
 
 		// the copy takes seconds: the drive must not go on meanwhile (CD audio would be
 		// ahead of the game), it is stopped and then put back as after a load
-		S_SV_STOP: if (since_inj >= GAP) begin
+		S_SV_STOP: if (inj_free) begin
 			saving       <= 1;
 			block_out    <= 1;
 			set_drop_all <= 1;
@@ -682,7 +692,7 @@ always @(posedge clk) begin
 		end
 
 		// stop the drive and everything it still sends
-		S_LD_FREEZE: if (paused && since_inj >= GAP) begin
+		S_LD_FREEZE: if (paused && inj_free) begin
 			block_out    <= 1;
 			set_drop_all <= 1;
 			inj_data     <= {16'h00FF, 96'd0};
@@ -753,7 +763,7 @@ always @(posedge clk) begin
 			end
 		end
 
-		S_LD_STEP: if (since_inj >= GAP) begin
+		S_LD_STEP: if (inj_free) begin
 			step <= step + 1'd1;
 			case (step)
 				// position of CD audio
@@ -823,7 +833,7 @@ always @(posedge clk) begin
 		// the sector being read must be in the FIFO again before the core runs; and the
 		// core must not send a command right after the last one put back: Main would see
 		// only one toggle of the two and lose both
-		S_LD_SETTLE: if ((refill_done || !refill_arm && !refill_pkt || wait_cnt >= REFILL) && since_inj >= GAP) begin
+		S_LD_SETTLE: if ((refill_done || !refill_arm && !refill_pkt || wait_cnt >= REFILL) && inj_free) begin
 			info <= !load_ok ? I_FAILED : (saving && !verifying) ? I_SAVED : I_LOADED;
 			st   <= S_DONE;
 		end
